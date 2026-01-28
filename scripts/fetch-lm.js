@@ -1,12 +1,12 @@
-// scripts/fetch-lm.js
-// Mengambil harga 1 gram dari halaman resmi LogamMulia setiap hari dan menyimpan ke data/prices.json
-// Jadwal diatur melalui GitHub Actions (lihat .github/workflows/update-lm.yml)
+// scripts/fetch-lm.js (CommonJS version)
+// Mengambil harga 1 gram dari LogamMulia dan menyimpan ke data/prices.json
 
-import fs from 'fs';
-import path from 'path';
+const fs = require('fs');
+const path = require('path');
+const https = require('https');
 
 const primary = 'https://www.logammulia.com/id/harga-emas-hari-ini';
-const reader = 'https://r.jina.ai/http://www.logammulia.com/id/harga-emas-hari-ini';
+const reader  = 'https://r.jina.ai/http://www.logammulia.com/id/harga-emas-hari-ini';
 const fallbacks = [
   'https://r.jina.ai/http://www.logammulia.com/en/harga-emas-hari-ini',
   'https://r.jina.ai/http://www.logammulia.com/index.php/harga-emas-hari-ini',
@@ -14,21 +14,25 @@ const fallbacks = [
   'https://r.jina.ai/http://www.goldpedia.org/pasar/antam/'
 ];
 
-async function grab(url){
-  const res = await fetch(url, { cache: 'no-store', redirect: 'follow' });
-  if(!res.ok) throw new Error('HTTP '+res.status);
-  return await res.text();
+function grab(url){
+  return new Promise((resolve, reject)=>{
+    https.get(url, (res)=>{
+      if(res.statusCode < 200 || res.statusCode >= 300){
+        return reject(new Error('HTTP '+res.statusCode));
+      }
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', ()=> resolve(data));
+    }).on('error', reject);
+  });
 }
 
 function parsePrice(text){
-  // Cari baris 1 gr / 1 gram
-  const rx = /(1\s*(?:gr|gram))[^
-]{0,160}?(?:Rp\s*)?([\d\.,]{6,})/i;
+  const rx = /(\b1\s*(?:gr|gram)\b)[^\n\r]{0,160}?(?:Rp\s*)?([\d\.,]{6,})/i;
   const m = text.match(rx);
   if(!m) return null;
   const n = +m[2].replace(/[^\d]/g,'');
-  if(n>1000000) return n;
-  return null;
+  return n>1000000 ? n : null;
 }
 
 async function main(){
@@ -39,10 +43,9 @@ async function main(){
       const t = await grab(u);
       const n = parsePrice(t);
       if(n){ price=n; src=u; break; }
-    }catch(e){ /* try next */ }
+    }catch(e){}
   }
   if(!price){
-    // Terakhir, coba langsung primary tanpa reader
     try{
       const t = await grab(primary);
       const n = parsePrice(t);
@@ -60,9 +63,9 @@ async function main(){
   };
 
   const outDir = path.join('data');
-  fs.mkdirSync(outDir, { recursive: true });
+  if(!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, 'prices.json'), JSON.stringify(payload, null, 2));
   console.log('OK:', payload);
 }
 
-await main();
+main().catch(err=>{ console.error(err); process.exit(1); });
